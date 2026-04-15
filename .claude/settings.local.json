@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(xargs wc:*)",
+      "Bash(node -e \"require\\('./node_modules/@supabase/supabase-js'\\)\")",
+      "Bash(npm install:*)",
+      "Bash(npx tsc:*)",
+      "Bash(npm run:*)",
+      "Bash(node -e \"const p=require\\('./package.json'\\); console.log\\('build:',p.scripts.build\\); console.log\\('name:',p.name\\);\")",
+      "Bash(node -e ':*)"
+    ]
+  }
+}

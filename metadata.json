@@ -1,0 +1,6 @@
+{
+  "name": "Executive Workspace - Office Attendance System",
+  "description": "A professional, modern office attendance management system with real-time tracking, rule-based compliance, and administrative controls.",
+  "requestFramePermissions": ["geolocation"],
+  "majorCapabilities": []
+}
