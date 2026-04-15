@@ -227,34 +227,54 @@ export const dataService = {
   },
 
   async getCurrentUserProfile(): Promise<User | null> {
-    // Use getSession (local cache) instead of getUser (network call) so auth
-    // context is always available immediately after signup / login.
     const { data: { session } } = await supabase.auth.getSession();
     if (!session?.user?.id) return null;
 
-    console.log('[getCurrentUserProfile] querying id =', session.user.id);
+    console.log('[getCurrentUserProfile] uid =', session.user.id);
 
-    const { data, error } = await supabase
-      .from('profiles')
-      .select('*')
-      .eq('id', session.user.id)
-      .maybeSingle();
-
-    if (error) {
-      console.error('[getCurrentUserProfile] query error:', error.message);
-      return null;
+    // ── Strategy 1: SECURITY DEFINER RPC (bypasses RLS entirely) ─────────
+    // get_current_profile() is defined in migration 003 and always returns
+    // the caller's own row regardless of RLS policy state.
+    let row: Record<string, unknown> | null = null;
+    try {
+      const { data: rpcData, error: rpcErr } = await supabase.rpc('get_current_profile');
+      if (!rpcErr && Array.isArray(rpcData) && rpcData.length > 0) {
+        row = rpcData[0] as Record<string, unknown>;
+        console.log('[getCurrentUserProfile] loaded via RPC');
+      } else if (rpcErr) {
+        // Function doesn't exist yet (migration 003 not run) — fall through
+        console.warn('[getCurrentUserProfile] RPC unavailable, falling back to direct query:', rpcErr.message);
+      }
+    } catch {
+      // Swallow — fall through to direct query
     }
-    if (!data) {
-      console.warn('[getCurrentUserProfile] No profile row found for id =', session.user.id);
 
-      // ── Auto-recovery ──────────────────────────────────────────────────
-      // If the signUp flow stored metadata (name, employee_id, company_id,
-      // role) on the auth user, we can recreate the missing profile row here.
-      // This handles cases where the auth user was created but the profile
-      // INSERT failed mid-flow.
+    // ── Strategy 2: Direct table query (subject to RLS) ──────────────────
+    // Works when migration 001 "profiles_read_authenticated" policy is
+    // active, OR when migration 003 has fixed the policies.
+    if (!row) {
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('id', session.user.id)
+        .maybeSingle();
+
+      if (error) {
+        console.error('[getCurrentUserProfile] direct query error:', error.message);
+      } else if (data) {
+        row = data as Record<string, unknown>;
+        console.log('[getCurrentUserProfile] loaded via direct query');
+      }
+    }
+
+    // ── Strategy 3: Auto-recovery from auth user metadata ────────────────
+    // If neither strategy found a row, the profile INSERT failed during
+    // signup. Recreate it from metadata stored on the auth user.
+    if (!row) {
+      console.warn('[getCurrentUserProfile] No profile found for uid =', session.user.id);
       const meta = (session.user.user_metadata ?? {}) as Record<string, unknown>;
       if (meta.company_id && meta.employee_id && session.user.email) {
-        console.log('[getCurrentUserProfile] Attempting profile auto-recovery from user metadata');
+        console.log('[getCurrentUserProfile] Attempting auto-recovery from user metadata');
         try {
           const { data: recovered, error: recErr } = await supabase
             .from('profiles')
@@ -276,25 +296,20 @@ export const dataService = {
             .maybeSingle();
 
           if (recErr) {
-            console.error('[getCurrentUserProfile] Auto-recovery failed:', recErr.message);
-            return null;
-          }
-          if (recovered) {
-            console.log('[getCurrentUserProfile] Profile recovered successfully');
-            const profile = mapProfile(recovered as Record<string, unknown>);
-            if (profile.companyId) _companyId = profile.companyId;
-            return profile;
+            console.error('[getCurrentUserProfile] Auto-recovery insert failed:', recErr.message);
+          } else if (recovered) {
+            console.log('[getCurrentUserProfile] Auto-recovery succeeded');
+            row = recovered as Record<string, unknown>;
           }
         } catch (recoverErr) {
           console.error('[getCurrentUserProfile] Auto-recovery error:', recoverErr);
         }
       }
-
-      return null;
     }
 
-    const profile = mapProfile(data as Record<string, unknown>);
-    // Set company context for all subsequent queries in this session
+    if (!row) return null;
+
+    const profile = mapProfile(row);
     if (profile.companyId) _companyId = profile.companyId;
     return profile;
   },
@@ -307,8 +322,9 @@ export const dataService = {
       .from('companies')
       .select('*')
       .eq('id', id)
-      .single();
-    if (error || !data) throw new Error('Company not found.');
+      .maybeSingle();
+    if (error) throw new Error('Company query error: ' + error.message);
+    if (!data) throw new Error('Company not found.');
     return mapCompany(data as Record<string, unknown>);
   },
 
