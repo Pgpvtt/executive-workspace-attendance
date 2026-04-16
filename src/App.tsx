@@ -4,7 +4,7 @@
  */
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { AnimatePresence, motion } from 'motion/react';
+import { motion } from 'motion/react';
 import type { Session } from '@supabase/supabase-js';
 import { supabase } from './services/supabase';
 import { dataService } from './services/dataService';
@@ -36,6 +36,8 @@ export default function App() {
 
   // Prevents SIGNED_IN event from racing handleLogin / handleSignupComplete
   const resolvedExternallyRef = useRef(false);
+  // Tracks whether signup flow is in progress (blocks early loadProfileAndCompany)
+  const signupInProgressRef = useRef(false);
   // Timeout ref for the "Loading your profile…" screen
   const profileTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -70,7 +72,10 @@ export default function App() {
         setSession(newSession);
 
         if (event === 'SIGNED_IN' && newSession) {
-          if (!resolvedExternallyRef.current) loadProfileAndCompany();
+          // Don't load profile here if signup flow is managing it
+          if (!resolvedExternallyRef.current && !signupInProgressRef.current) {
+            loadProfileAndCompany();
+          }
         }
 
         if (event === 'SIGNED_OUT') {
@@ -136,9 +141,10 @@ export default function App() {
 
   const handleSignupComplete = (comp: Company) => {
     resolvedExternallyRef.current = true;
+    signupInProgressRef.current = false;
     setCompany(comp);
     setShowSignup(false);
-    loadProfileAndCompany(); // fire-and-forget — session already set by Supabase
+    loadProfileAndCompany(); // fire-and-forget — profile now exists
   };
 
   const handleLogout = async () => {
@@ -178,19 +184,28 @@ export default function App() {
     );
   }
 
+  // Keep Signup visible even after session is created (avoids race where
+  // SIGNED_IN fires before profile exists and unmounts the success screen)
+  if (showSignup) {
+    return (
+      <Signup
+        onSignupComplete={handleSignupComplete}
+        onBackToLogin={() => {
+          signupInProgressRef.current = false;
+          setShowSignup(false);
+        }}
+      />
+    );
+  }
+
   if (!session) {
-    if (showSignup) {
-      return (
-        <Signup
-          onSignupComplete={handleSignupComplete}
-          onBackToLogin={() => setShowSignup(false)}
-        />
-      );
-    }
     return (
       <Login
         onLogin={handleLogin}
-        onSignup={() => setShowSignup(true)}
+        onSignup={() => {
+          signupInProgressRef.current = true;
+          setShowSignup(true);
+        }}
         onResendConfirmation={handleResendConfirmation}
       />
     );
@@ -300,17 +315,14 @@ export default function App() {
       title={getTitle()}
       onLogout={handleLogout}
     >
-      <AnimatePresence mode="wait">
-        <motion.div
-          key={activeTab}
-          initial={{ opacity: 0, y: 10 }}
-          animate={{ opacity: 1, y: 0 }}
-          exit={{ opacity: 0, y: -10 }}
-          transition={{ duration: 0.2 }}
-        >
-          {renderContent()}
-        </motion.div>
-      </AnimatePresence>
+      <motion.div
+        key={activeTab}
+        initial={{ opacity: 0, y: 10 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.15 }}
+      >
+        {renderContent()}
+      </motion.div>
     </Layout>
   );
 }

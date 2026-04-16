@@ -82,11 +82,12 @@ Deno.serve(async (req: Request) => {
       fieldTrackingEnabled,
       lateThresholdMinutes,
       minHoursForFullDay,
+      companyId,
       existingAuthId,  // if updating an existing user
     } = body;
 
     // Validate required fields
-    if (!email || !name || !employeeId || !code || !department || !role || !shiftId) {
+    if (!email || !name || !employeeId || !code || !department || !role || !shiftId || !companyId) {
       return new Response(JSON.stringify({ error: 'Missing required fields' }), {
         status: 400,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -130,6 +131,7 @@ Deno.serve(async (req: Request) => {
     // 3. Upsert profile
     const profileData = {
       id: authUserId,
+      company_id: companyId,
       employee_id: employeeId,
       code,
       name,

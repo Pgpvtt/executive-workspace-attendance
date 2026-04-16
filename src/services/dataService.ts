@@ -455,6 +455,7 @@ export const dataService = {
         supabase
           .from('shifts')
           .insert({
+            id:                     crypto.randomUUID(),
             company_id:             company.id,
             name:                   'Standard',
             start_time:             '09:00',
@@ -870,6 +871,7 @@ export const dataService = {
     const { data, error } = await supabase
       .from('attendance')
       .insert({
+        id:          crypto.randomUUID(),
         user_id:     record.userId,
         company_id:  requireCompany(),
         date:        record.date,
